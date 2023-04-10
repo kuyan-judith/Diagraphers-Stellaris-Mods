@@ -40,7 +40,7 @@ class mod():
 	parents (optional): List of other mods to assume are also loaded if this one is, in reverse load order. Default [].
 	is_vanilla (optional): Boolean that indicates whether a mod object is vanilla. Default False.
 	'''
-	def __init__( self, workshop_item:Opt(str) = None, mod_path:Opt(str) = None, parents:list[mod] = [], is_vanilla:bool=False ) -> None:
+	def __init__( self, workshop_item:Opt[str] = None, mod_path:Opt[str] = None, parents:list[mod] = [], is_vanilla:bool=False ) -> None:
 		if mod_path is None:
 			self.mod_path = os.path.join( workshop_path, workshop_item )
 		else:
@@ -51,7 +51,7 @@ class mod():
 			self.inheritance_list = [self]+parents+[vanilla_mod_object]
 		self.is_vanilla = is_vanilla
 
-	def inheritance(self) -> Generator[mod]:
+	def inheritance(self) -> Generator[mod,None,None]:
 		'''yields the mod, then each of its parents in reverse load order, then vanilla'''
 		for mod in self.inheritance_list:
 			yield mod
@@ -73,23 +73,28 @@ class mod():
 	def folder( self, path:str ) -> str:
 		return os.path.join( self.mod_path, path )
 
-	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, parser_commands:Opt[str]=None ) -> list[CWElement]:
+	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, include_parents:bool=False, file_suffix:str='.txt', parser_commands:Opt[str]=None ) -> list[CWElement]:
 		'''reads and parses the files in the specified folder in this mod into a list of CWElements
 		parameters:
 		path: the path to the specified folder, relative to the mod
 		exclude_files (optional): a lost of filenames to skip, e.g. because the entries within are dummy elements or because they're assumed to have been overwritten
 		replace_local_variables (optional): if True, locally-defined scripted variables will be replaced with their values.
+		include_parents (optional): if True, also load contents of parent folders that aren't file-overwritten
+		file_suffix (optional): only files with this suffix will be read. Default '.txt'
 		parser_commands (optional): if this is set to a string, the following tags will be enabled (where KEY stands for the entered string):
 		"#KEY:skip", "#KEY:/skip": ignore everything between these tags (or from the "#KEY:skip" to the end of the string if "#KEY:/skip" is not encountered)
 		'''
-		folder = self.folder(path)
+		exclude_files = exclude_files.copy()
 		CW_list = []
-		if os.path.exists(folder):
-			for file in os.listdir(path=path):
-				# print(file)
-				if file.endswith(self.file_suffix) and not file in exclude_files:
-					filepath = os.path.join(path,file)
-					CW_list = CW_list + fileToCW( filepath, replace_local_variables=replace_local_variables, parser_commands=parser_commands )
+		for mod in self.inheritance_list:
+			if (mod is self) or include_parents:
+				folder = mod.folder(path)
+				if os.path.exists(folder):
+					for file in os.listdir(path=folder):
+						if file.endswith(file_suffix) and not file in exclude_files:
+							filepath = os.path.join(folder,file)
+							CW_list = CW_list + fileToCW( filepath, replace_local_variables=replace_local_variables, parser_commands=parser_commands )
+							exclude_files.append(file)
 		return CW_list
 
 
@@ -211,7 +216,7 @@ class CWElement():
 				return element
 		return CWElement("",parent=self)
 
-	def getElements(self,key:str) -> Generator[CWElement]:
+	def getElements(self,key:str) -> Generator[CWElement,None,None]:
 		'''yields each subelement of this block with the specified key'''
 		for element in self.subelements:
 			if match( element.name, key ):
@@ -226,7 +231,7 @@ class CWElement():
 				return element.value
 		return default
 
-	def getValues(self,key:str) -> Generator[str]:
+	def getValues(self,key:str) -> Generator[str,None,None]:
 		'''yields the right-hand value of each subelement of this block with the specified key'''
 		for element in self.subelements:
 			if match( element.name, key ):
@@ -239,7 +244,7 @@ class CWElement():
 				return element.value != "no"
 		return default
 
-	def getArrayContents(self,key:str) -> Generator[str]:
+	def getArrayContents(self,key:str) -> Generator[str,None,None]:
 		'''yields each string within the specified array subelement'''
 		for element in self.subelements:
 			if match( element.name, key ):
@@ -254,7 +259,7 @@ class CWElement():
 					return entry.name
 		return default
 
-	def getArrayContentsElements(self,key:str) -> Generator[Opt[CWElement]]:
+	def getArrayContentsElements(self,key:str) -> Generator[CWElement,None,None]:
 		'''yeilds each element within the specified array subelement'''
 		for element in self.subelements:
 			if match( element.name, key ):
@@ -518,7 +523,7 @@ def stringToCW( string:str, filename:Opt[str]=None, parent:Opt[CWElement]=None, 
 	'''
 	# replace parser command tokens with something that doesn't start with "#" so they don't get removed with comments
 	if parser_commands is not None:
-		parser_command_template = r"#" + re.compile(parser_commands) + r":([^ \n]*)".format(parser_commands)
+		parser_command_template = r"#{}:([^ \n]*)".format(parser_commands)
 		string = re.sub( parser_command_template, r"\|\(PARSER:$1\)\|", string )
 	# remove comments
 	string = re.sub(r"#.*\n",r" ",string)
@@ -574,4 +579,3 @@ def CWToString(elements:list[CWElement]) -> str:
 	for e in elements:
 		cwStrings.append(e.getString())
 	return "\n\n".join(cwStrings)
-
