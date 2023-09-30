@@ -38,7 +38,7 @@ triggers = {
 		'origin_post_apocalyptic':'is_post_apocalyptic_empire',
 		'origin_remnants':'is_remnants_empire',
 		'origin_shattered_ring':'is_shattered_ring_empire',
-		'origin_void_dwellers':'is_void_dwellers_empire',
+		'origin_void_dwellers':'has_void_dweller_origin',
 		'origin_scion':'is_scion_empire',
 		'origin_galactic_doorstep':'is_galactic_doorstep_empire',
 		'origin_tree_of_life':'is_tree_of_life_empire',
@@ -56,6 +56,7 @@ triggers = {
 		'origin_fear_of_the_dark':'is_fear_of_the_dark_empire',
 		'origin_payback':'is_payback_empire',
 		'origin_broken_shackles':'is_broken_shackles_empire',
+		'origin_fruitful':'is_fruitful_empire',
 		'origin_enlightened':'is_enlightened_empire',
 		'origin_slavers':'is_minamar',
 		True:None,
@@ -91,6 +92,8 @@ triggers = {
 		'civic_heroic_tales':'has_heroic_tales',
 		'civic_philosopher_king':'has_philosopher_king',
 		'civic_machine_servitor':'is_servitor_empire',
+		'civic_void_hive':'is_void_hive_empire',
+		'civic_selective_kinship':'is_selective_kinship_empire',
 		True:None,
 	},
 	'has_valid_civic':{
@@ -124,6 +127,8 @@ triggers = {
 		'civic_heroic_tales':'has_heroic_tales',
 		'civic_philosopher_king':'has_philosopher_king',
 		'civic_machine_servitor':'is_servitor_empire',
+		'civic_void_hive':'is_void_hive_empire',
+		'civic_selective_kinship':'is_selective_kinship_empire',
 		True:None,
 	},
 	'is_planet_class':{
@@ -267,6 +272,7 @@ class stu_path():
 
 root = stu_path(
 	vanilla_path="C:\\Program Files (x86)\\Steam\\steamapps\\common\\Stellaris",
-	stu_path="C:\\Users\\kuyan\\OneDrive\\Documents\\Paradox Interactive\\Stellaris\\mod\\scripted_trigger_undercoat"
+	# stu_path="C:\\Users\\kuyan\\OneDrive\\Documents\\Paradox Interactive\\Stellaris\\mod\\scripted_trigger_undercoat"
+	stu_path="C:\\Users\\kuyan\\OneDrive\\Desktop\\mod stuff\\stu_test_output"
 )
 root.process()
