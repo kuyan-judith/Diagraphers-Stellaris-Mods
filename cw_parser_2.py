@@ -25,6 +25,16 @@ def quoteIfNecessary(s:str) -> str:
 	else:
 		return(s)
 
+def decomposeWord(s:str):
+	units = ['']
+	for char in s:
+		if char in ['@','.',':']:
+			units.append(char)
+			units.append('')
+		else:
+			units[-1].append(char)
+
+
 def generate_joined_folder(location:str,name:str) -> str:
 	'''like os.path.join, except it only takes 2 arguments and it will create a folder if it doesn't already exists'''
 	path = os.path.join(location,name)
@@ -39,8 +49,9 @@ class mod():
 	mod_path (optional): The path for this mod. If not specified it will be derived from workshop_item.
 	parents (optional): List of other mods to assume are also loaded if this one is, in reverse load order. Default [].
 	is_vanilla (optional): Boolean that indicates whether a mod object is vanilla. Default False.
+	vanilla_object (optiona): overwrites the default vanilla mod object
 	'''
-	def __init__( self, workshop_item:Opt[str] = None, mod_path:Opt[str] = None, parents:list[mod] = [], is_vanilla:bool=False ) -> None:
+	def __init__( self, workshop_item:Opt[str] = None, mod_path:Opt[str] = None, parents:list[mod] = [], is_vanilla:bool=False, vanilla_object = None ) -> None:
 		if mod_path is None:
 			self.mod_path = os.path.join( workshop_path, workshop_item )
 		else:
@@ -48,7 +59,9 @@ class mod():
 		if is_vanilla:
 			self.inheritance_list = [self]+parents
 		else:
-			self.inheritance_list = [self]+parents+[vanilla_mod_object]
+			if vanilla_object is None:
+				vanilla_object = vanilla_mod_object
+			self.inheritance_list = [self]+parents+[vanilla_object]
 		self.is_vanilla = is_vanilla
 
 	def inheritance(self) -> Generator[mod,None,None]:
@@ -73,7 +86,7 @@ class mod():
 	def folder( self, path:str ) -> str:
 		return os.path.join( self.mod_path, path )
 
-	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, include_parents:bool=False, file_suffix:str='.txt', parser_commands:Opt[str]=None ) -> list[CWElement]:
+	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, include_parents:bool=False, file_suffix:str='.txt', parser_commands=None ) -> list[CWElement]:
 		'''reads and parses the files in the specified folder in this mod into a list of CWElements
 		parameters:
 		path: the path to the specified folder, relative to the mod
@@ -81,8 +94,10 @@ class mod():
 		replace_local_variables (optional): if True, locally-defined scripted variables will be replaced with their values.
 		include_parents (optional): if True, also load contents of parent folders that aren't file-overwritten
 		file_suffix (optional): only files with this suffix will be read. Default '.txt'
-		parser_commands (optional): if this is set to a string, the following tags will be enabled (where KEY stands for the entered string):
+		parser_commands (optional): if this is set to a string or list of strings, the following tags will be enabled (where KEY stands for any of the entered strings):
 		"#KEY:skip", "#KEY:/skip": ignore everything between these tags (or from the "#KEY:skip" to the end of the string if "#KEY:/skip" is not encountered)
+		"#KEY:add_metadata:<metadata key>:<metadata value>": set the specified attribute in the "metadata" dictionary to the specified value for the next object
+		"#KEY:add_block_metadata:<metadata key>:<metadata value>", "#KEY:/add_block_metadata:<metadata key>": set the specified attribute in the "metadata" dictionary to the specified value for each top-level object between these tags
 		'''
 		exclude_files = exclude_files.copy()
 		CW_list = []
@@ -162,7 +177,7 @@ def getQuotedString(tokens):
 
 class CWElement():
 	'''class representing a Clausewitz script element of form "<key> = <value>", "<key> <= <value>", <key> = { <parameters> } etc.'''
-	def __init__( self, name:str, comparison:Opt[list[str]]=None, value:Opt[str]=None, subelements:Opt[list[CWElement]]=None, parent:Opt[CWElement]=None, filename:Opt[str]=None):
+	def __init__( self, name:str, comparison:Opt[list[str]]=None, value:Opt[str]=None, subelements:Opt[list[CWElement]]=None, parent:Opt[CWElement]=None, filename:Opt[str]=None, overwrite_type:Opt[str]=None, mod:Opt[mod]=None ):
 		self.name = name
 		self.comparison = comparison
 		self.value = value
@@ -170,14 +185,19 @@ class CWElement():
 		self.parent = parent
 		self.metadata = {}
 		self.filename = filename
+		self.overwrite_type = overwrite_type
+		self.mod = mod
 	
 	def __str__(self) -> str:
 		return self.getString()
 	
 	def __repr__(self) -> str:
 		return self.name
+	
+	def set_name(self,name):
+		self.name = name
 
-	def parse( self, tokens:list[str], replace_local_variables:bool=False, local_variables:dict[str,str]={} ) -> CWElement:
+	def parse( self, tokens:list[str], replace_local_variables:bool=False, local_variables:dict[str,str]={}, mod:Opt[mod]=None ) -> CWElement:
 		while len(tokens)>0:
 			nextToken = tokens.pop(0)
 			if nextToken.startswith('@') and replace_local_variables:
@@ -188,7 +208,7 @@ class CWElement():
 			if nextToken in ("=","<",">"):
 				self.comparison.append(nextToken)
 			elif nextToken == "{":
-				self.subelements = parseCW( tokens, parent=self, filename=self.filename, replace_local_variables=replace_local_variables, local_variables=local_variables )
+				self.subelements = parseCW( tokens, parent=self, filename=self.filename, replace_local_variables=replace_local_variables, local_variables=local_variables, mod=mod )
 				return self
 			elif nextToken == "hsv":
 				self.value = "hsv"
@@ -198,73 +218,77 @@ class CWElement():
 					local_variables[self.name]=nextToken
 				return self
 
-	def hasAttribute(self,key:str) -> bool:
-		'''checks if a block contains a subelement with the given key'''
-		if not self.hasSubelements():
-			return False
-		for element in self.subelements:
-			if match( element.name, key ):
-				return True
-		return False
-
-	def getElement(self,key:str) -> CWElement:
-		'''returns the first subelement of this block with the specified key'''
-		if not self.hasSubelements():
-			return CWElement("",parent=self)
-		for element in self.subelements:
-			if match( element.name, key ):
-				return element
-		return CWElement("",parent=self)
-
 	def getElements(self,key:str) -> Generator[CWElement,None,None]:
 		'''yields each subelement of this block with the specified key'''
 		for element in self.subelements:
 			if match( element.name, key ):
 				yield element
 
-	def getValue(self,key:str,default:str="no") -> str:
+	def hasAttribute(self,key:str) -> bool:
+		'''checks if a block contains a subelement with the given key'''
+		if not self.hasSubelements():
+			return False
+		for element in self.getElements(key):
+			return True
+		return False
+
+	def getElement(self,key:str) -> CWElement:
+		'''returns the first subelement of this block with the specified key'''
+		if not self.hasSubelements():
+			return CWElement("",parent=self)
+		for element in self.getElements(key):
+			return element
+		return CWElement("",parent=self)
+
+	def getValue(self,key:str,default:str="no",if_complex=None) -> str:
 		'''returns the right-hand value of the first subelement of this block with the specified key'''
 		if not self.hasSubelements():
 			return default
-		for element in self.subelements:
-			if match( element.name, key ):
+		for element in self.getElements(key):
+			if element.value is None:
+				if if_complex is None:
+					return default
+				else:
+					return if_complex
+			else:
 				return element.value
 		return default
+	
+	def hasKeyValue(self,key:str,value:str):
+		for element in self.getElements(key):
+			if match( element.value, value ):
+				return True
+		return False
 
 	def getValues(self,key:str) -> Generator[str,None,None]:
 		'''yields the right-hand value of each subelement of this block with the specified key'''
-		for element in self.subelements:
-			if match( element.name, key ):
-				yield element.value
+		for element in self.getElements(key):
+			yield element.value
 
 	def getValueBoolean(self,key:str,default:bool=False) -> bool:
 		'''returns the boolean value of the first subelement of this block with the specified key'''
-		for element in self.subelements:
-			if match( element.name, key ):
-				return element.value != "no"
+		for element in self.getElements(key):
+			return element.value != "no"
 		return default
 
 	def getArrayContents(self,key:str) -> Generator[str,None,None]:
 		'''yields each string within the specified array subelement'''
-		for element in self.subelements:
-			if match( element.name, key ):
-				for entry in element.subelements:
-					yield entry.name
+		for element in self.getElements(key):
+			for entry in element.subelements:
+				yield entry.name
 
 	def getArrayContentsFirst( self, key:str, default:str="no" ) -> str:
 		'''returns the first string within the specified array subelement'''
-		for element in self.subelements:
-			if match( element.name, key ):
-				for entry in element.subelements:
-					return entry.name
+		for element in self.getElements(key):
+			for entry in element.subelements:
+				return entry.name
 		return default
 
 	def getArrayContentsElements(self,key:str) -> Generator[CWElement,None,None]:
 		'''yeilds each element within the specified array subelement'''
-		for element in self.subelements:
-			if match( element.name, key ):
-				for entry in element.subelements:
-					yield entry
+		for element in self.getElements(key):
+			for entry in element.subelements:
+				yield entry
 
 
 	def hasSubelements(self) -> bool:
@@ -292,7 +316,7 @@ class CWElement():
 		if self.name is not None:
 			words = [ quoteIfNecessary(self.name) ]
 		else:
-			words = [ 'NULL' ]
+			words = [ ]
 		if self.comparison is not None:
 			words.append("".join(self.comparison))
 		if self.value is not None:
@@ -339,6 +363,7 @@ class CWElement():
 		return(" ".join(words))
 
 	def convertGovernmentTrigger(self,trigger:str=None) -> CWElement:
+		# print(self)
 		'''returns a copy of a government requirements block converted to normal trigger syntax'''
 		# text = <loc key> handled separately, at the next level up
 		if match( self.name, 'text' ):
@@ -381,56 +406,12 @@ class CWElement():
 		else:
 			return self.parent.getRoot()
 
-	def replaceInlines( self, mod:mod ) -> None:
+	def replaceInlines( self, mod:mod, parser_commands=None ) -> None:
 		'''Expands all inline scripts within this element.
 		parameters:
 		mod: the function will assume this mod, its parents, and no other mods are installed'''
-		found_inlines = True
-		# repeat until no inlines can be replaced, incase there are inlines within inlines
-		while found_inlines:
-			found_inlines = False
-			if self.hasSubelements():
-				# generate a new subelement list so as to avoid altering a list while iterating over it
-				expanded = []
-				for element in self.subelements:
-					# if an inline script is found, try to expand it
-					if match( element.name, 'inline_script' ):
-						# if there are parameters, replace them before parsing
-						if element.hasSubelements():
-							script = mod.lookupInline( element.getValue('script') )
-							if script is None:
-								expanded.append(element)
-							else:
-								# found an inline, so we need to keep iterating
-								found_inlines = True
-								file = open(script,"r")
-								script = file.read()
-								file.close()
-								for param in element.subelements:
-									if param.value is None:
-										val = ''
-									else:
-										val = param.value
-									script = script.replace( '${}$'.format(param.name), val )
-								expanded = expanded + stringToCW(script,mod,parent=self)
-						# if there are no parameters, read the file immediately
-						else:
-							script = mod.lookupInline( element.value )
-							if script is None:
-								expanded.append(element)
-							else:
-								# found an inline, so we need to keep iterating
-								found_inlines = True
-								expanded = expanded + fileToCW(script,mod,parent=self)
-						# print("replacing with script "+str(script))
-						inline_contents = inline_contents + script
-						self.subelements.remove(element)
-					else:
-						element.replaceInlines(mod)
-						expanded.append(element)
-				# replace the old subelement list with the new one
-				if found_inlines:
-					self.subelements = expanded
+		if self.hasSubelements():
+			self.subelements = replaceInlines(self.subelements,mod,parser_commands=parser_commands)
 
 	def getArrayTriggers( self, block:str, trigger:str, mode=None, default='no' ) -> str:
 		'''generates a trigger or effect block (in string form) from the contents of an array, e.g. you can use this to convert a prerequisite block to something of the form
@@ -483,16 +464,82 @@ class CWElement():
 			else:
 				lines_block = ' '.join(lines)
 				return lines_block
-		
 
 
-def parseCW( tokens:list[str], parent:Opt[CWElement]=None, filename:Opt[str]=None, replace_local_variables=False, local_variables:dict[str,str]={} ):
+def replaceInlines( CWList:list[CWElement], mod:mod, parser_commands=None ) -> list[CWElement]:
+	'''Given a list of CWElement, returns a copy of the list with any inline scripts expanded, including inline scripts in subelements. Mutates subelements of the list but not the list itself.
+	parameters:
+	CWList: the list to expand
+	mod: the function will assume this mod, its parents, and no other mods are installed'''
+	expanded = []
+	for element in CWList:
+		# if an inline script is found, try to expand it
+		if match( element.name, 'inline_script' ):
+			# if there are parameters, replace them before parsing
+			if element.hasSubelements():
+				script = mod.lookupInline( element.getValue('script') )
+				if script is None:
+					expanded.append(element)
+				else:
+					# found an inline, so we need to keep iterating
+					found_inlines = True
+					file = open(script,"r")
+					script = file.read()
+					file.close()
+					for param in element.subelements:
+						if param.value is None:
+							val = ''
+						else:
+							val = param.value
+						script = script.replace( '${}$'.format(param.name), val )
+					inline_contents = stringToCW(script,filename=element.filename,parent=element.parent,parser_commands=parser_commands,overwrite_type=element.overwrite_type,mod=element.mod)
+					inline_contents = replaceInlines(inline_contents,mod,parser_commands=parser_commands)
+					expanded = expanded + inline_contents
+			# if there are no parameters, read the file immediately
+			else:
+				script = mod.lookupInline( element.value )
+				if script is None:
+					expanded.append(element)
+				else:
+					# found an inline, so we need to keep iterating
+					found_inlines = True
+					inline_contents = fileToCW(script,filename=element.filename,parent=element.parent,parser_commands=parser_commands,overwrite_type=element.overwrite_type,mod=element.mod)
+					inline_contents = replaceInlines(inline_contents,mod,parser_commands=parser_commands)
+					expanded = expanded + inline_contents
+			# print("replacing with script "+str(script))
+		else:
+			element.replaceInlines(mod,parser_commands=parser_commands)
+			expanded.append(element)
+	return expanded
+
+
+def parseCW( tokens:list[str], parent:Opt[CWElement]=None, filename:Opt[str]=None, replace_local_variables=False, local_variables:dict[str,str]={}, overwrite_type:Opt[str]=None, mod:Opt[mod]=None ):
 	'''creates a list of CWElements from a list of tokens'''
 	elements = []
+	block_metadata = {}
+	unit_metadata = {}
 	while len(tokens)>0:
 		nextToken = tokens.pop(0)
 		if nextToken == "":
 			pass
+		elif nextToken.startswith('|(PARSER:add_block_metadata:'):
+			command_params = nextToken[28:-2] # strips initial "|(Parser:add_block_metadata:" and final ")|"
+			command_params = command_params.split(':')
+			if len(command_params)==1:
+				block_metadata[command_params[0]] = True
+			else:
+				block_metadata[command_params[0]] = command_params[1]
+		elif nextToken.startswith('|(PARSER:add_metadata:'):
+			command_params = nextToken[22:-2] # strips initial "|(Parser:add_metadata:" and final ")|"
+			command_params = command_params.split(':')
+			if len(command_params)==1:
+				unit_metadata[command_params[0]] = True
+			else:
+				unit_metadata[command_params[0]] = command_params[1]
+		elif nextToken.startswith('|(PARSER:/add_block_metadata:'):
+			command_params = nextToken[29:-2] # strips initial "|(Parser:/add_block_metadata:" and final ")|"
+			command_params = command_params.split(':')
+			block_metadata.pop(command_params[0])
 		else:
 			if nextToken == "\"":
 				nextToken = getQuotedString(tokens)
@@ -502,30 +549,49 @@ def parseCW( tokens:list[str], parent:Opt[CWElement]=None, filename:Opt[str]=Non
 			elif nextToken == "}":
 				return elements
 			elif nextToken == "{":
-				e = CWElement(None,parent=parent,filename=filename)
+				e = CWElement(None,parent=parent,filename=filename,overwrite_type=overwrite_type,mod=mod)
 				elements.append(e)
-				e.subelements = parseCW( tokens, e, filename=filename, replace_local_variables=replace_local_variables, local_variables=local_variables )
+				for key in block_metadata:
+					e.metadata[key] = block_metadata[key]
+				for key in unit_metadata:
+					e.metadata[key] = unit_metadata[key]
+				unit_metadata = {}
+				e.subelements = parseCW( tokens, e, filename=filename, replace_local_variables=replace_local_variables, local_variables=local_variables, mod=mod )
 			else:
-				elements.append(CWElement(nextToken,parent=parent,filename=filename))
+				e = CWElement(nextToken,parent=parent,filename=filename,overwrite_type=overwrite_type,mod=mod)
+				elements.append(e)
+				for key in block_metadata:
+					e.metadata[key] = block_metadata[key]
+				for key in unit_metadata:
+					e.metadata[key] = unit_metadata[key]
+				unit_metadata = {}
 			lastElement = elements[-1]
 	return elements
 			
 
-def stringToCW( string:str, filename:Opt[str]=None, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands:Opt[str]=None ) -> list[CWElement]:
+def stringToCW( string:str, filename:Opt[str]=None, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands=None, overwrite_type:Opt[str]=None, mod:Opt[mod]=None ) -> list[CWElement]:
 	'''parses a string into a list of CWElement objects
 	parameters:
 	string: The string to convert.
 	filename (optional): Marks CWElements as being from the specified file.
 	parent (optional): Marks CWElements as being children of the specified CWElement.
 	replace_local_variables (optional): if True, locally-defined scripted variables will be replaced with their values.
-	parser_commands (optional): if this is set to a string, the following tags will be enabled (where KEY stands for the entered string):
+	parser_commands (optional): if this is set to a string or list of strings, the following tags will be enabled (where KEY stands for any of the entered strings):
 	"#KEY:skip", "#KEY:/skip": ignore everything between these tags (or from the "#KEY:skip" to the end of the string if "#KEY:/skip" is not encountered)
+	"#KEY:add_metadata:<metadata key>:<metadata value>": set the specified attribute in the "metadata" dictionary to the specified value for the next object
+	"#KEY:add_block_metadata:<metadata key>:<metadata value>", "#KEY:/add_block_metadata:<metadata key>": set the specified attribute in the "metadata" dictionary to the specified value for each top-level object between these tags
 	'''
 	# replace parser command tokens with something that doesn't start with "#" so they don't get removed with comments
 	if parser_commands is not None:
-		parser_command_template = r"#{}:([^ \n]*)".format(parser_commands)
-		string = re.sub( parser_command_template, r"\|\(PARSER:$1\)\|", string )
+		if isinstance(parser_commands,str):
+			parser_command_template = r"#{}:([^ \n]*)".format(parser_commands)
+			string = re.sub( parser_command_template, r"\|\(PARSER:$1\)\|", string )
+		elif isinstance(parser_commands,list):
+			for key in parser_commands:
+				parser_command_template = r"#{}:([^ \n]*)".format(key)
+				string = re.sub( parser_command_template, r"\|\(PARSER:$1\)\|", string )
 	# remove comments
+	string = string+"\n"
 	string = re.sub(r"#.*\n",r" ",string)
 	# put spaces around special characters so split(' ') makes them into separate tokens
 	string = string.replace("="," = ")
@@ -545,31 +611,32 @@ def stringToCW( string:str, filename:Opt[str]=None, parent:Opt[CWElement]=None, 
 			if token == '|(PARSER:skip)|':
 				while token != '|(PARSER:/skip)|' and i < len(tokenList):
 					token = tokenList.pop(i)
-			elif token.startswith('|(PARSER:'):
-				token = tokenList.pop(i)
 			else:
 				i += 1
 	# parse token list
-	cw = parseCW( tokenList, filename=filename, parent=parent, replace_local_variables=replace_local_variables )
+	cw = parseCW( tokenList, filename=filename, parent=parent, replace_local_variables=replace_local_variables, overwrite_type=overwrite_type, mod=mod )
 	return cw
 
 
-def fileToCW( path:str, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands:Opt[str]=None )->list[CWElement]:
+def fileToCW( path:str, filename=None, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands=None, overwrite_type:Opt[str]='lios', mod:Opt[mod]=None )->list[CWElement]:
 	'''reads and parses a file into a list of CWElement objects
 	parameters:
 	path: The file path.
-	parent (optional): Marks CWElements as being children of the specified CWElement (for use in the CWElement.replace_inlines method).
+	parent (optional): Marks CWElements as being children of the specified CWElement (for use in the CWElement.replaceInlines method).
 	replace_local_variables (optional): if True, locally-defined scripted variables will be replaced with their values.
-	parser_commands (optional): if this is set to a string, the following tags will be enabled (where KEY stands for the entered string):
+	parser_commands (optional): if this is set to a string or list of strings, the following tags will be enabled (where KEY stands for any of the entered strings):
 	"#KEY:skip", "#KEY:/skip": ignore everything between these tags (or from the "#KEY:skip" to the end of the string if "#KEY:/skip" is not encountered)
+	"#KEY:add_metadata:<metadata key>:<metadata value>": set the specified attribute in the "metadata" dictionary to the specified value for the next object
+	"#KEY:add_block_metadata:<metadata key>:<metadata value>", "#KEY:/add_block_metadata:<metadata key>": set the specified attribute in the "metadata" dictionary to the specified value for each top-level object between these tags
 	'''
 	file = open(path,"r")
 	try:
 		fileContents = file.read()
 	except:
 		fileContents = ""
-	filename = os.path.basename(path)
-	cw = stringToCW( fileContents, filename=filename, parent=parent, replace_local_variables=replace_local_variables, parser_commands=parser_commands )
+	if filename is None:
+		filename = os.path.basename(path)
+	cw = stringToCW( fileContents, filename=filename, parent=parent, replace_local_variables=replace_local_variables, parser_commands=parser_commands, overwrite_type=overwrite_type, mod=mod )
 	file.close()
 	return cw
 
@@ -579,3 +646,4 @@ def CWToString(elements:list[CWElement]) -> str:
 	for e in elements:
 		cwStrings.append(e.getString())
 	return "\n\n".join(cwStrings)
+

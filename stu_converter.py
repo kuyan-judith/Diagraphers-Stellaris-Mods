@@ -57,6 +57,7 @@ triggers = {
 		'origin_payback':'is_payback_empire',
 		'origin_broken_shackles':'is_broken_shackles_empire',
 		'origin_fruitful':'is_fruitful_empire',
+		'origin_riftworld':'is_riftworld_empire',
 		'origin_enlightened':'is_enlightened_empire',
 		'origin_slavers':'is_minamar',
 		True:None,
@@ -194,8 +195,8 @@ flag_patterns = [
 	'construction_type = starbase_defenses',
 	'job_[^ \n]*_add',
 	'pc_[^ \n]*_habitability',
-	'factor = @ap_technological_ascendancy_rare_tech',
 	'has_modifier = flooded_habitat',
+	'spawn_planet',
 ]
 
 class stu_path():
@@ -217,7 +218,7 @@ class stu_path():
 				entry_stup.process()
 		elif self.name.endswith('.txt') and not self.name.endswith('ThirdPartyLicenses.txt'):
 			self.is_dir=False
-			print(self.vanilla_path)
+			# print(self.vanilla_path)
 			file = open(self.vanilla_path,'r',encoding='UTF-8')
 			self.text = file.read()
 			file.close()
@@ -241,6 +242,7 @@ class stu_path():
 			for value in triggers[trigger]:
 				if value is True:
 					if trigger in self.text:
+						print( f"found pattern {trigger} in file {self.vanilla_path}" )
 						should_write = True
 				elif trigger == 'has_civic' and self.parent.name == 'events':
 					substitute_trigger = triggers[trigger][value]
@@ -248,6 +250,7 @@ class stu_path():
 						f = pattern.format( trigger, value )
 						r = substitution_patterns_allow_invalid[pattern].format( substitute_trigger )
 						if f in self.text:
+							print( f"found pattern {f} in file {self.vanilla_path}" )
 							should_write = True
 							self.text = self.text.replace(f,r)
 				else:
@@ -256,15 +259,18 @@ class stu_path():
 						f = pattern.format( trigger, value )
 						r = substitution_patterns[pattern].format( substitute_trigger )
 						if f in self.text:
+							print( f"found pattern {f} in file {self.vanilla_path}" )
 							should_write = True
 							self.text = self.text.replace(f,r)
 		for f in inline_substituation_patterns:
 			if f in self.text:
+				print( f"found pattern {f} in file {self.vanilla_path}" )
 				should_write = True
 				r = 'inline_script = "{}"'.format( inline_substituation_patterns[f] )
 				self.text = self.text.replace(f,r)
 		for pattern in flag_patterns:
 			if re.match( pattern, self.text ):
+				print( f"found pattern {pattern} in file {self.vanilla_path}" )
 				should_write=True
 		if should_write:
 			self.write()
@@ -272,7 +278,7 @@ class stu_path():
 
 root = stu_path(
 	vanilla_path="C:\\Program Files (x86)\\Steam\\steamapps\\common\\Stellaris",
-	# stu_path="C:\\Users\\kuyan\\OneDrive\\Documents\\Paradox Interactive\\Stellaris\\mod\\scripted_trigger_undercoat"
-	stu_path="C:\\Users\\kuyan\\OneDrive\\Desktop\\mod stuff\\stu_test_output"
+	stu_path="C:\\Users\\kuyan\\OneDrive\\Documents\\Paradox Interactive\\Stellaris\\mod\\scripted_trigger_undercoat"
+	# stu_path="C:\\Users\\kuyan\\OneDrive\\Desktop\\mod stuff\\stu_test_output"
 )
 root.process()
