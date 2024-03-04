@@ -18,9 +18,9 @@ def quote(s:str) -> str:
 	return "\"{}\"".format(s)
 
 def quoteIfNecessary(s:str) -> str:
-	'''puts a quote around a string iff it is empty or contains whitespace'''
+	'''puts a quote around a string if it is empty or contains whitespace'''
 	s = s.replace( '\"' , '\\\"' )
-	if " " in s or "\n" in s or "\t" in s or s=="":
+	if any(char.isspace() for char in s) or s == "":
 		return quote(s)
 	else:
 		return(s)
