@@ -15,11 +15,17 @@ class CWElement():
 
 def quote(s:str) -> str:
 	'''puts quote marks around a string'''
+	s = s.replace( '\"' , '\\\"' )
 	return "\"{}\"".format(s)
+
+def indent( s:str, count:int=1 ) -> str:
+	tabs = '\n'
+	for i in range(count):
+		tabs += '\t'
+	return s.replace("\n",tabs)
 
 def quoteIfNecessary(s:str) -> str:
 	'''puts a quote around a string iff it is empty or contains whitespace'''
-	s = s.replace( '\"' , '\\\"' )
 	if " " in s or "\n" in s or "\t" in s or s=="":
 		return quote(s)
 	else:
@@ -35,11 +41,12 @@ def decomposeWord(s:str):
 			units[-1].append(char)
 
 
-def generate_joined_folder(location:str,name:str) -> str:
+def generate_joined_folder(path:str,*args) -> str:
 	'''like os.path.join, except it only takes 2 arguments and it will create a folder if it doesn't already exists'''
-	path = os.path.join(location,name)
-	if not os.path.exists(path):
-		os.mkdir(path)
+	for folder in args:
+		path = os.path.join(path,folder)
+		if not os.path.exists(path):
+			os.mkdir(path)
 	return path
 
 class mod():
@@ -85,8 +92,20 @@ class mod():
 			
 	def folder( self, path:str ) -> str:
 		return os.path.join( self.mod_path, path )
+	
+	def getFiles( self, path:str, exclude_files:list[str]=[], include_parents:bool=False, file_suffix:str='.txt' ):
+		exclude_files = exclude_files.copy()
+		for mod in self.inheritance_list:
+			if (mod is self) or include_parents:
+				folder = mod.folder(path)
+				if os.path.exists(folder):
+					for file in os.listdir(path=folder):
+						if file.endswith(file_suffix) and not file in exclude_files:
+							filepath = os.path.join(folder,file)
+							exclude_files.append(file)
+							yield filepath
 
-	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, include_parents:bool=False, file_suffix:str='.txt', parser_commands=None ) -> list[CWElement]:
+	def read_folder(self, path:str, exclude_files:list[str]=[], replace_local_variables:bool=False, include_parents:bool=False, file_suffix:str='.txt', parser_commands=None, overwrite_type:Opt[str]='LIOS' ) -> list[CWElement]:
 		'''reads and parses the files in the specified folder in this mod into a list of CWElements
 		parameters:
 		path: the path to the specified folder, relative to the mod
@@ -99,17 +118,9 @@ class mod():
 		"#KEY:add_metadata:<metadata key>:<metadata value>": set the specified attribute in the "metadata" dictionary to the specified value for the next object
 		"#KEY:add_block_metadata:<metadata key>:<metadata value>", "#KEY:/add_block_metadata:<metadata key>": set the specified attribute in the "metadata" dictionary to the specified value for each top-level object between these tags
 		'''
-		exclude_files = exclude_files.copy()
 		CW_list = []
-		for mod in self.inheritance_list:
-			if (mod is self) or include_parents:
-				folder = mod.folder(path)
-				if os.path.exists(folder):
-					for file in os.listdir(path=folder):
-						if file.endswith(file_suffix) and not file in exclude_files:
-							filepath = os.path.join(folder,file)
-							CW_list = CW_list + fileToCW( filepath, replace_local_variables=replace_local_variables, parser_commands=parser_commands )
-							exclude_files.append(file)
+		for filepath in self.getFiles( path, exclude_files=exclude_files, include_parents=include_parents, file_suffix=file_suffix ):
+			CW_list = CW_list + fileToCW( filepath, replace_local_variables=replace_local_variables, parser_commands=parser_commands, overwrite_type=overwrite_type )
 		return CW_list
 
 
@@ -327,7 +338,7 @@ class CWElement():
 				for e in self.subelements:
 					bracketContents.append(e.getString())
 				bracketContentsString = "\n".join(bracketContents)
-				bracketContentsString = bracketContentsString.replace("\n","\n\t")
+				bracketContentsString = indent(bracketContentsString)
 				subelementString = "{{\n\t{}\n}}".format(bracketContentsString)
 			else:
 				bracketContents = []
@@ -346,7 +357,7 @@ class CWElement():
 				for e in self.subelements:
 					bracketContents.append(e.getString())
 				subelementString = "\n".join(bracketContents)
-				subelementString = subelementString.replace("\n","\n\t")
+				subelementString = indent(subelementString)
 				if include_brackets:
 					subelementString = "{{\n\t{}\n}}".format(subelementString)
 			else:
@@ -464,9 +475,15 @@ class CWElement():
 			else:
 				lines_block = ' '.join(lines)
 				return lines_block
+			
+	def parent_hierarchy( self ):
+		next_obj = self
+		while next_obj is not None:
+			yield next_obj
+			next_obj = next_obj.parent
 
 
-def replaceInlines( CWList:list[CWElement], mod:mod, parser_commands=None ) -> list[CWElement]:
+def replaceInlines( CWList:list[CWElement], mod:mod, parser_commands=None, filter=lambda x:True ) -> list[CWElement]:
 	'''Given a list of CWElement, returns a copy of the list with any inline scripts expanded, including inline scripts in subelements. Mutates subelements of the list but not the list itself.
 	parameters:
 	CWList: the list to expand
@@ -474,7 +491,7 @@ def replaceInlines( CWList:list[CWElement], mod:mod, parser_commands=None ) -> l
 	expanded = []
 	for element in CWList:
 		# if an inline script is found, try to expand it
-		if match( element.name, 'inline_script' ):
+		if match( element.name, 'inline_script' ) and filter(element):
 			# if there are parameters, replace them before parsing
 			if element.hasSubelements():
 				script = mod.lookupInline( element.getValue('script') )
@@ -618,7 +635,7 @@ def stringToCW( string:str, filename:Opt[str]=None, parent:Opt[CWElement]=None, 
 	return cw
 
 
-def fileToCW( path:str, filename=None, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands=None, overwrite_type:Opt[str]='lios', mod:Opt[mod]=None )->list[CWElement]:
+def fileToCW( path:str, filename=None, parent:Opt[CWElement]=None, replace_local_variables:bool=False, parser_commands=None, overwrite_type:Opt[str]='LIOS', mod:Opt[mod]=None )->list[CWElement]:
 	'''reads and parses a file into a list of CWElement objects
 	parameters:
 	path: The file path.
